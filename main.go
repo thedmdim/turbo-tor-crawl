@@ -1,68 +1,38 @@
 package main
 
 import (
-	//"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"sync"
 
-	//"time"
-
 	"github.com/alimate/unbounded-channel/channels"
 	"golang.org/x/net/html"
 )
 
-func main() {
-	// set global proxy
-	proxy, err := url.Parse("socks5://127.0.0.1:9150")
-	if err != nil {
-		panic(err)
-	}
-	http.DefaultTransport = &http.Transport{
-		Proxy: http.ProxyURL(proxy),
-	}
+var (
+	proxy  = flag.Bool("proxy", true, "specify you will use a proxy")
+	port   = flag.String("port", "9150", "specify the proxy port")
+	target = flag.String("url", "", "specify the entry point for the crawler as a URL")
+)
 
-	jobs := channels.NewUnboundedChannel()
-	// var hosts sync.Map
-	// var visited sync.Map
-	results := new(sync.Map)
-	visited := new(sync.Map)
-
-	jobs.Enqueue("http://freshonifyfe4rmuh6qwpsexfhdrww7wnt5qmkoertwxmcuvm4woo4ad.onion")
-
-	semaphore := make(chan bool, 6)
-
-	for {
-		semaphore <- true
-		go func() {
-			worker(jobs, results, visited)
-			<-semaphore
-		}()
-	}
-}
-
-func worker (jobs *channels.UnboundedChannel, hosts *sync.Map, visited *sync.Map) {
-
+func worker(jobs *channels.UnboundedChannel, hosts *sync.Map, visited *sync.Map) {
 	origin := jobs.Dequeue().(string)
 
 	if _, ok := visited.Load(origin); ok {
-		// check if we have already requsted the url
 		return
 	}
 
-	res, err := http.Get(origin)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	if res.StatusCode != http.StatusOK {
-		log.Printf("%s returned %d", origin, res.StatusCode)
-		return
-	}
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Print()
+		}
+	}()
+	res, _ := http.Get(origin)
 
-	defer func(){
+	defer func() {
 		res.Body.Close()
 		visited.Store(origin, struct{}{})
 
@@ -73,27 +43,24 @@ func worker (jobs *channels.UnboundedChannel, hosts *sync.Map, visited *sync.Map
 		}
 	}()
 
-
 	dom, err := html.Parse(res.Body)
 	if err != nil {
-		return
+		log.Println(err)
 	}
 
-	var links []string
+	links := []string{}
 	findLinks(&links, dom)
 	relLinksToAbs(&links, origin)
-	
 
 	for _, link := range links {
 		if _, ok := visited.Load(link); !ok {
 			jobs.Enqueue(link)
 		}
 	}
-	
+
 }
 
 func findLinks(links *[]string, n *html.Node) {
-	// Рекурсивно ищет a[href] на странице
 	if n == nil {
 		return
 	}
@@ -109,7 +76,7 @@ func findLinks(links *[]string, n *html.Node) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		findLinks(links, c)
 	}
-	
+
 }
 
 func relLinksToAbs(links *[]string, baseURL string) {
@@ -121,14 +88,46 @@ func relLinksToAbs(links *[]string, baseURL string) {
 			continue
 		}
 
-		abs.RawQuery = "" // del get params
+		abs.RawQuery = ""
 		if flink := abs.String(); link != flink {
 			(*links)[i] = flink
 		}
-	
+
 	}
 
 }
 
+func main() {
+	flag.Usage = func() {
+		w := flag.CommandLine.Output()
+		fmt.Fprintln(w, "Usage of Turbo-Tor-Crawler:")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
 
+	if *proxy {
+		proxy_url, err := url.Parse("socks5://127.0.0.1:" + *port)
+		if err != nil {
+			log.Println(err)
+		}
 
+		http.DefaultTransport = &http.Transport{
+			Proxy: http.ProxyURL(proxy_url),
+		}
+	}
+
+	jobs := channels.NewUnboundedChannel()
+	results := new(sync.Map)
+	visited := new(sync.Map)
+
+	jobs.Enqueue(*target)
+	semaphore := make(chan bool, 6)
+
+	for {
+		semaphore <- true
+		go func() {
+			worker(jobs, results, visited)
+			<-semaphore
+		}()
+	}
+}
