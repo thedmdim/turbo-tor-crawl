@@ -7,47 +7,52 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/alimate/unbounded-channel/channels"
+	
+	
 	"golang.org/x/net/html"
 )
 
+type Settings struct {
+	From          string
+	Proxy         string
+	Threads int
+	Logging       bool
+	Output string
+	Filter string
+	// Connect timeout ?
+}
 
-type LinksStorage struct {
+type linksStorage struct {
 	// literally results of crawling
 	results sync.Map
 	// unique constraint to not request same link twice
 	visited sync.Map
 }
 
-type Settings struct {
-	From          string
-	Proxy         string
-	MaxGoroutines int
-	Logging       bool
-	Output string
-	// Filter string ?
-	// Connect timeout ?
-}
-
-type Crawler struct {
+type crawler struct {
 	jobs      *channels.UnboundedChannel
-	ls        *LinksStorage
+	ls        *linksStorage
 	semaphore chan bool
 	output string
+	filter string
 }
 
-func NewCrawler(s Settings) *Crawler {
-	// Проверка переданных в Crawler параметров
-
+func NewCrawler(s Settings) *crawler {
+	
+	// output
+	// Enable writing output to file 
+	log.SetOutput(io.Discard)
 	if s.Logging {
 		log.SetOutput(os.Stdout)
-	} else {
-		log.SetOutput(io.Discard)
 	}
 
+	// proxy
+	// Set proxy for all requests
 	if s.Proxy != "" {
 		proxy, err := url.Parse(s.Proxy)
 		if err != nil {
@@ -59,12 +64,14 @@ func NewCrawler(s Settings) *Crawler {
 		}
 	}
 
-	semaphoreDefault := 6
-	if s.MaxGoroutines == 0 {
-		log.Printf("No max goroutine provided, default %d", semaphoreDefault)
-		s.MaxGoroutines = semaphoreDefault
+	// threads
+	// Set number of threads requesting URL at the same time
+	if s.Threads == 0 {
+		log.Printf("No max goroutine provided, default %d", s.Threads)
 	}
 
+	// from
+	// A site from which crawling starts
 	if s.From == "" {
 		log.Fatalf("Provide url from which we'll start crawling")
 	}
@@ -73,21 +80,27 @@ func NewCrawler(s Settings) *Crawler {
 	if err != nil {
 		log.Fatalf("Cannot parse URL of %s", s.From)
 	}
+	if u.Scheme == "" {
+		u.Scheme = "http"
+	}
 
-	c := new(Crawler)
+	// Create and pass settings to crawl object
+	c := new(crawler)
 
 	c.jobs = channels.NewUnboundedChannel()
 	c.jobs.Enqueue(u.String())
 
-	c.ls = new(LinksStorage)
-	c.semaphore = make(chan bool, s.MaxGoroutines)
+	c.ls = new(linksStorage)
+	c.semaphore = make(chan bool, s.Threads)
 
 	c.output = s.Output
+	c.filter = s.Filter
 
 	return c
 }
 
-func (c *Crawler) Start() {
+func (c *crawler) Start() {
+	// Start crawling
 	for {
 		c.semaphore <- true
 		link := c.jobs.Dequeue().(string)
@@ -95,7 +108,7 @@ func (c *Crawler) Start() {
 		go func() {
 			log.Printf("Start worker with %s", link)
 
-			results, err := c.Worker(link)
+			results, err := c.worker(link)
 
 			if err != nil {
 				log.Printf("Worker: %v", err)
@@ -112,22 +125,24 @@ func (c *Crawler) Start() {
 	}
 }
 
-func writeFile(filename string, text string) {
-	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0777)
-	if err != nil {
-		log.Println(err)
-	}
-	defer file.Close()
+func (c *crawler) worker(link string) ([]string, error) {
+	// A worker which requests site and collects links from it
 
-	file.WriteString(text + "\n")
-}
-
-func (c *Crawler) Worker(link string) ([]string, error) {
+	// Check if we have already requsted the url
 	if _, ok := c.ls.visited.Load(link); ok {
-		// check if we have already requsted the url
 		return nil, fmt.Errorf("%s is already visited", link)
 	}
 
+	// Check if url matches pattern
+	matched, err := regexp.MatchString(c.filter, link)
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		return nil, fmt.Errorf("%s doesn't match filter", link)
+	}
+
+	// Request URL
 	res, err := http.Get(link)
 	if err != nil {
 		return nil, err
@@ -143,31 +158,27 @@ func (c *Crawler) Worker(link string) ([]string, error) {
 		u, _ := url.Parse(link)
 		if _, ok := c.ls.results.Load(u.Host); !ok {
 			c.ls.results.Store(u.Host, struct{}{})
-			// outputs result
+			// Outputs result
 			fmt.Println(u.Host)
 			if c.output != "" {
 				writeFile(c.output, u.Host)
 			}
 		}
 	}()
-	results := findLinks(res)
-	relLinksToAbs(&results, link)
 
-	// // delete from result already visited links
-	// for i:=0;i==len(results);i++{
-	// 	if _, ok := ls.visited.Load(results[i]); ok {
-	// 		results = append(results[:i], results[i+1:]...)
-	// 		i--
-	// 	}
-	// }
+	// Find all links and make them absolute
+	results := findLinks(res.Body)
+	relLinksToAbs(&results, link)
 
 	return results, nil
 
 }
 
-func findLinks(responce *http.Response) []string {
+func findLinks(body io.Reader) []string {
+	// Find all links in HTML
+
 	var links []string
-	token := html.NewTokenizer(responce.Body)
+	token := html.NewTokenizer(body)
 	for {
 		token_type := token.Next()
 
@@ -194,6 +205,8 @@ func findLinks(responce *http.Response) []string {
 }
 
 func relLinksToAbs(links *[]string, baseURL string) {
+	// Make all links absolute
+
 	base, _ := url.Parse(baseURL)
 
 	for i, link := range *links {
@@ -209,4 +222,14 @@ func relLinksToAbs(links *[]string, baseURL string) {
 
 	}
 
+}
+
+func writeFile(filename string, text string) {
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0777)
+	if err != nil {
+		log.Println(err)
+	}
+	defer file.Close()
+
+	file.WriteString(text + "\n")
 }

@@ -7,10 +7,12 @@ import (
 )
 
 var (
-	port   = flag.String("port", "9150", "specify the proxy port")
-	target = flag.String("url", "", "specify the entry point for the crawler as a URL")
-	thread = flag.Int("thread", 50, "specify the number of threads")
-	output = flag.String("output", "result.txt", "specify the file to record the results of the program")
+	from = flag.String("from", "", "specify the entry point for the crawler as a URL")
+	proxy   = flag.String("proxy", "", "specify the proxy url")
+	threads = flag.Int("thread", 50, "specify the number of threads")
+	output = flag.String("output", "", "specify the output file")
+	verbosity = flag.Bool("v", false, "enable verbosity mode")
+	filter = flag.String("filter", "", "Regex pattern which allows visiting URLs")
 )
 
 func main() {
@@ -22,16 +24,17 @@ func main() {
 	flag.Parse()
 
 	fmt.Printf(
-		"URL: %s\nPort: %s\nThreads: %d\n",
-		*target, *port, *thread,
+		"From: %s\nPort: %s\nThreads: %d\n",
+		*from, *proxy, *threads,
 	)
 
 	s := crawler.Settings{
-		From:          *target,
-		Proxy:         "socks5://127.0.0.1:" + *port,
-		MaxGoroutines: *thread,
+		From:          *from,
+		Proxy:         *proxy,
+		Threads: *threads,
 		Output: *output,
-		//Logging: true,
+		Logging: *verbosity,
+		Filter: *filter,
 	}
 
 	c := crawler.NewCrawler(s)
