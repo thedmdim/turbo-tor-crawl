@@ -1,7 +1,6 @@
 package crawler
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"log"
