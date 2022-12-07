@@ -10,6 +10,7 @@ var (
 	port   = flag.String("port", "9150", "specify the proxy port")
 	target = flag.String("url", "", "specify the entry point for the crawler as a URL")
 	thread = flag.Int("thread", 50, "specify the number of threads")
+	output = flag.String("output", "result.txt", "specify the file to record the results of the program")
 )
 
 func main() {
@@ -29,6 +30,7 @@ func main() {
 		From:          *target,
 		Proxy:         "socks5://127.0.0.1:" + *port,
 		MaxGoroutines: *thread,
+		Output: *output,
 		//Logging: true,
 	}
 

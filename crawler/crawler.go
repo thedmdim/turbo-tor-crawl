@@ -15,9 +15,6 @@ import (
 	"golang.org/x/net/html"
 )
 
-var (
-	stdout = flag.String("output", "log/result.txt", "specify the file to record the results of the program")
-)
 
 type LinksStorage struct {
 	// literally results of crawling
@@ -31,6 +28,7 @@ type Settings struct {
 	Proxy         string
 	MaxGoroutines int
 	Logging       bool
+	Output string
 	// Filter string ?
 	// Connect timeout ?
 }
@@ -39,6 +37,7 @@ type Crawler struct {
 	jobs      *channels.UnboundedChannel
 	ls        *LinksStorage
 	semaphore chan bool
+	output string
 }
 
 func NewCrawler(s Settings) *Crawler {
@@ -84,6 +83,8 @@ func NewCrawler(s Settings) *Crawler {
 	c.ls = new(LinksStorage)
 	c.semaphore = make(chan bool, s.MaxGoroutines)
 
+	c.output = s.Output
+
 	return c
 }
 
@@ -95,7 +96,7 @@ func (c *Crawler) Start() {
 		go func() {
 			log.Printf("Start worker with %s", link)
 
-			results, err := Worker(link, c.ls)
+			results, err := c.Worker(link)
 
 			if err != nil {
 				log.Printf("Worker: %v", err)
@@ -122,8 +123,8 @@ func writeFile(filename string, text string) {
 	file.WriteString(text + "\n")
 }
 
-func Worker(link string, ls *LinksStorage) ([]string, error) {
-	if _, ok := ls.visited.Load(link); ok {
+func (c *Crawler) Worker(link string) ([]string, error) {
+	if _, ok := c.ls.visited.Load(link); ok {
 		// check if we have already requsted the url
 		return nil, fmt.Errorf("%s is already visited", link)
 	}
@@ -138,14 +139,16 @@ func Worker(link string, ls *LinksStorage) ([]string, error) {
 
 	defer func() {
 		res.Body.Close()
-		ls.visited.Store(link, struct{}{})
+		c.ls.visited.Store(link, struct{}{})
 
 		u, _ := url.Parse(link)
-		if _, ok := ls.results.Load(u.Host); !ok {
-			ls.results.Store(u.Host, struct{}{})
+		if _, ok := c.ls.results.Load(u.Host); !ok {
+			c.ls.results.Store(u.Host, struct{}{})
 			// outputs result
 			fmt.Println(u.Host)
-			writeFile(*stdout, u.Host)
+			if c.output != "" {
+				writeFile(c.output, u.Host)
+			}
 		}
 	}()
 	results := findLinks(res)
