@@ -1,16 +1,22 @@
 package crawler
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/alimate/unbounded-channel/channels"
 	"golang.org/x/net/html"
+)
+
+var (
+	stdout = flag.String("output", "log/result.txt", "specify the file to record the results of the program")
 )
 
 type LinksStorage struct {
@@ -21,20 +27,19 @@ type LinksStorage struct {
 }
 
 type Settings struct {
-	From string
-	Proxy string
+	From          string
+	Proxy         string
 	MaxGoroutines int
-	Logging bool
+	Logging       bool
 	// Filter string ?
 	// Connect timeout ?
 }
 
 type Crawler struct {
-	jobs *channels.UnboundedChannel
-	ls *LinksStorage
+	jobs      *channels.UnboundedChannel
+	ls        *LinksStorage
 	semaphore chan bool
 }
-
 
 func NewCrawler(s Settings) *Crawler {
 	// Проверка переданных в Crawler параметров
@@ -107,6 +112,16 @@ func (c *Crawler) Start() {
 	}
 }
 
+func writeFile(filename string, text string) {
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0777)
+	if err != nil {
+		log.Println(err)
+	}
+	defer file.Close()
+
+	file.WriteString(text + "\n")
+}
+
 func Worker(link string, ls *LinksStorage) ([]string, error) {
 	if _, ok := ls.visited.Load(link); ok {
 		// check if we have already requsted the url
@@ -121,7 +136,7 @@ func Worker(link string, ls *LinksStorage) ([]string, error) {
 		return nil, fmt.Errorf("%s returned %d", link, res.StatusCode)
 	}
 
-	defer func(){
+	defer func() {
 		res.Body.Close()
 		ls.visited.Store(link, struct{}{})
 
@@ -130,21 +145,12 @@ func Worker(link string, ls *LinksStorage) ([]string, error) {
 			ls.results.Store(u.Host, struct{}{})
 			// outputs result
 			fmt.Println(u.Host)
+			writeFile(*stdout, u.Host)
 		}
 	}()
-
-	dom, err := html.Parse(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("can't parse HTML for %s: %w", link, err)
-	}
-
-	results, err := findLinks(dom)
-	if err != nil {
-		return nil, fmt.Errorf("haven't found any link at %s", link)
-	}
-
+	results := findLinks(res)
 	relLinksToAbs(&results, link)
-	
+
 	// // delete from result already visited links
 	// for i:=0;i==len(results);i++{
 	// 	if _, ok := ls.visited.Load(results[i]); ok {
@@ -153,34 +159,36 @@ func Worker(link string, ls *LinksStorage) ([]string, error) {
 	// 	}
 	// }
 
-
 	return results, nil
 
 }
 
-func findLinks(n *html.Node) ([]string, error) {
-
+func findLinks(responce *http.Response) []string {
 	var links []string
-	// Рекурсивно ищет a[href] на странице
+	token := html.NewTokenizer(responce.Body)
+	for {
+		token_type := token.Next()
 
-	var f func(n *html.Node)
-	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "a" {
-			for _, attr := range n.Attr {
-				if attr.Key == "href" {
-					links = append(links, attr.Val)
+		if token_type == html.ErrorToken {
+			log.Printf("html.ErrorToken")
+			break
+		}
+
+		if token_type == html.StartTagToken || token_type == html.EndTagToken {
+			token := token.Token()
+
+			if token.Data == "a" {
+				for _, attr := range token.Attr {
+					if attr.Key == "href" {
+						if strings.HasPrefix(attr.Val, "http://") || strings.HasPrefix(attr.Val, "https://") {
+							links = append(links, attr.Val)
+						}
+					}
 				}
 			}
 		}
-	
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
 	}
-	f(n)
-	return links, nil
-
-	
+	return links
 }
 
 func relLinksToAbs(links *[]string, baseURL string) {
@@ -196,7 +204,7 @@ func relLinksToAbs(links *[]string, baseURL string) {
 		if flink := abs.String(); link != flink {
 			(*links)[i] = flink
 		}
-	
+
 	}
 
 }
