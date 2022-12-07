@@ -20,31 +20,33 @@ type LinksStorage struct {
 	visited sync.Map
 }
 
-type Crawler struct {
+type Settings struct {
 	From string
 	Proxy string
 	MaxGoroutines int
 	Logging bool
 	// Filter string ?
 	// Connect timeout ?
+}
 
+type Crawler struct {
 	jobs *channels.UnboundedChannel
 	ls *LinksStorage
 	semaphore chan bool
 }
 
 
-func (c *Crawler) Init() {
+func NewCrawler(s Settings) *Crawler {
 	// Проверка переданных в Crawler параметров
 
-	if c.Logging {
+	if s.Logging {
 		log.SetOutput(os.Stdout)
 	} else {
 		log.SetOutput(io.Discard)
 	}
 
-	if c.Proxy != "" {
-		proxy, err := url.Parse(c.Proxy)
+	if s.Proxy != "" {
+		proxy, err := url.Parse(s.Proxy)
 		if err != nil {
 			log.Panicf("Can't read proxy address: %e", err)
 
@@ -55,25 +57,29 @@ func (c *Crawler) Init() {
 	}
 
 	semaphoreDefault := 6
-	if c.MaxGoroutines == 0 {
+	if s.MaxGoroutines == 0 {
 		log.Printf("No max goroutine provided, default %d", semaphoreDefault)
-		c.MaxGoroutines = semaphoreDefault
+		s.MaxGoroutines = semaphoreDefault
 	}
 
-	if c.From == "" {
+	if s.From == "" {
 		log.Fatalf("Provide url from which we'll start crawling")
 	}
 
-	u, err := url.Parse(c.From)
+	u, err := url.Parse(s.From)
 	if err != nil {
-		log.Fatalf("Cannot parse URL of %s", c.From)
+		log.Fatalf("Cannot parse URL of %s", s.From)
 	}
+
+	c := new(Crawler)
 
 	c.jobs = channels.NewUnboundedChannel()
 	c.jobs.Enqueue(u.String())
 
 	c.ls = new(LinksStorage)
-	c.semaphore = make(chan bool, c.MaxGoroutines)
+	c.semaphore = make(chan bool, s.MaxGoroutines)
+
+	return c
 }
 
 func (c *Crawler) Start() {

@@ -5,14 +5,14 @@ import (
 )
 
 func main() {
-	c := crawler.Crawler{
+	s := crawler.Settings{
 		From: "http://freshonifyfe4rmuh6qwpsexfhdrww7wnt5qmkoertwxmcuvm4woo4ad.onion/",
 		Proxy: "socks5://127.0.0.1:9150",
 		MaxGoroutines: 10,
 		//Logging: true,
 	}
 
-	c.Init()
+	c := crawler.NewCrawler(s)
 
 	c.Start()
 }
