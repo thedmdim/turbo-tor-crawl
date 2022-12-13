@@ -29,7 +29,7 @@ The example of command to start crawling TOR sites:
 ```
 ./turbo-tor-crawl -v \
 --from freshonifyfe4rmuh6qwpsexfhdrww7wnt5qmkoertwxmcuvm4woo4ad.onion \
---proxy socks5://127.0.0.1:9150`
+--proxy socks5://127.0.0.1:9150
 ```
 
 ## Go check our communities!
